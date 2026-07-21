@@ -236,6 +236,8 @@ sentient includes a custom PCB design for Tier 3 sensing:
 
 ## Roadmap
 
+## Roadmap
+
 - [x] Dynamic accel by height
 - [x] Smart macros
 - [x] Auto shaper calibration with max accel update
@@ -243,15 +245,15 @@ sentient includes a custom PCB design for Tier 3 sensing:
 - [x] KlipperScreen integration
 - [x] Chamber heat soak
 - [x] Humidity monitoring
-- [x] Nozzle temperature offset compensation
 - [x] Per-filament Z offset calibration (native Klipper module)
 - [x] Automatic Z offset application in START_PRINT
 - [x] Custom sensor PCB design (VL53L5CX)
 - [ ] One line installer script
 - [ ] VL53L5CX native Klipper driver
-- [ ] First layer optical scanning
-- [ ] Real time flow compensation
-- [ ] Failure detection
+- [ ] Failure detection (spaghetti, layer shift, knock-over)
+- [ ] Print presence detection
+- [ ] Gross height verification
+- [ ] Camera integration for optical flow calibration
 - [ ] Moonraker update manager integration
 - [ ] Full native Klipper module suite
 
