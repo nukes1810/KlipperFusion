@@ -1,0 +1,542 @@
+# sentient — User Manual
+**Version 3 | github.com/nukes1810/sentient**
+
+---
+
+## Table of Contents
+
+1. First Time Setup
+2. Input Shaper & Max Accel
+3. Z Offset Calibration
+4. Per-Filament Settings
+5. Dynamic Accel System
+6. Heat Soak
+7. Dashboard
+8. KlipperScreen
+9. All Commands Reference
+10. Troubleshooting
+
+---
+
+## 1. First Time Setup
+
+After installing sentient the recommended order for a new printer or fresh install:
+
+**Step 1 — Run input shaper calibration**
+```
+RUN_SHAPER_CALIBRATION
+```
+This homes the printer, measures resonance on X and Y axes, picks the best shaper type and frequency, updates max accel automatically, and saves everything. Takes about 3-5 minutes. Klipper restarts when done.
+
+**Step 2 — Calibrate Z offset per filament**
+
+Load each filament and run:
+```
+CALIBRATE_PLA
+CALIBRATE_PETG
+CALIBRATE_ASA
+CALIBRATE_ABS
+CALIBRATE_TPU
+```
+
+Or calibrate all at once (swap filament when prompted):
+```
+CALIBRATE_ALL_FILAMENTS
+```
+
+**Step 3 — Set slicer machine start gcode**
+```
+START_PRINT BED_TEMP=[first_layer_bed_temperature] EXTRUDER_TEMP=[first_layer_temperature] FILAMENT=[filament_type] CHAMBER_TEMP=[chamber_temperature]
+```
+
+**Step 4 — Set Z offset to 0 in slicer**
+
+sentient handles Z offset automatically. Set it to 0 in your slicer and leave it there.
+
+**Step 5 — Clear filament start/end gcode in slicer**
+
+sentient handles Z offset per filament automatically. Remove any SET_GCODE_OFFSET lines from filament gcode.
+
+---
+
+## 2. Input Shaper & Max Accel
+
+### What is input shaper?
+
+Input shaper measures the resonance frequency of your printer frame and toolhead. It then applies a filter that cancels out those frequencies during printing. The result is faster printing with less ringing and banding.
+
+### Running calibration
+
+```
+RUN_SHAPER_CALIBRATION
+```
+
+What happens:
+1. Printer homes
+2. ADXL345 accelerometer measures X axis resonance
+3. ADXL345 measures Y axis resonance
+4. Klipper picks the best shaper type for each axis
+5. Max accel updates automatically from Y axis results
+6. Saves and restarts Klipper
+
+### Where does max accel come from?
+
+Max accel is calculated from your **Y axis frequency** — Y is almost always the limiting axis on CoreXY printers because the bed or gantry is heavier on Y.
+
+The formula sentient uses:
+```
+max_accel = Y_frequency² × π² × 0.3
+```
+
+Example with Y = 38Hz:
+```
+38² × 9.87 × 0.3 = 4,288 ≈ 4,300 mm/s²
+```
+
+This is the maximum acceleration your printer can handle without introducing resonance artifacts. sentient sets this automatically after every shaper run.
+
+### How often to recalibrate
+
+Run shaper calibration when:
+- You change the toolhead or any toolhead components
+- You tighten or replace belts
+- You add frame stiffeners or modify the frame
+- You notice banding returning on prints
+- You add or remove significant mass to the toolhead
+
+No need to run it every print — once calibrated it stays good until something mechanical changes.
+
+### Checking current shaper values
+
+```
+TUNE_STATUS
+```
+
+Shows:
+```
+Y shaper freq:    38.0 Hz
+Max accel:        4300 mm/s²
+Medium accel:     3010 mm/s²
+Safe accel:       1935 mm/s²
+```
+
+### Manual accel override
+
+Override the current accel zone anytime from console or KlipperScreen:
+```
+ACCEL_FULL          → sets max accel (8000 example)
+ACCEL_MEDIUM        → sets 70% of max
+ACCEL_CONSERVATIVE  → sets 45% of max
+```
+
+---
+
+## 3. Z Offset Calibration
+
+### What sentient does
+
+sentient prints a small 40x40mm calibration square, waits for it to stabilize, then uses Cartographer to scan the printed surface. It compares the actual layer height to the target squish height for that filament type and adjusts Z offset until they match. The result is saved and applied automatically on every future print of that filament.
+
+### Target squish heights
+
+These are the actual layer heights sentient aims for after squish:
+
+| Filament | Target height | Why |
+|---|---|---|
+| PLA | 0.18mm | Slight squish, good adhesion |
+| PETG | 0.19mm | Less squish, PETG sticks aggressively |
+| ASA | 0.17mm | More squish for hot bed adhesion |
+| ABS | 0.17mm | Same as ASA |
+| TPU | 0.19mm | Minimal squish, flexible material |
+
+### Running calibration
+
+**Single filament:**
+```
+CALIBRATE_PLA
+CALIBRATE_PETG
+CALIBRATE_ASA
+CALIBRATE_ABS
+CALIBRATE_TPU
+```
+
+**All filaments:**
+```
+CALIBRATE_ALL_FILAMENTS
+```
+Note: swap filament between each type when running all.
+
+**Manual with custom temps:**
+```
+SENTIENT_CALIBRATE_Z FILAMENT=ASA BED_TEMP=100 NOZZLE_TEMP=260 ITERATIONS=3
+```
+
+### Checking saved offsets
+
+```
+SENTIENT_STATUS
+```
+
+Output example:
+```
+=== sentient Filament Z Offsets ===
+ABS      offset: -0.385  (target squish: 0.17mm)
+ASA      offset: -0.390  (target squish: 0.17mm)
+PETG     offset: -0.355  (target squish: 0.19mm)
+PLA      offset: -0.365  (target squish: 0.18mm)
+TPU      offset: -0.360  (target squish: 0.19mm)
+====================================
+```
+
+### Manually setting an offset
+
+If you know the correct offset:
+```
+SENTIENT_SET_FILAMENT_OFFSET FILAMENT=ASA OFFSET=-0.390
+```
+
+### Applying an offset manually
+
+```
+SENTIENT_APPLY_FILAMENT_OFFSET FILAMENT=ASA
+```
+
+### Scanning current surface
+
+```
+SENTIENT_SCAN_LAYER
+```
+
+Reports actual height vs baseline. Useful for diagnosing first layer issues.
+
+### Saving a baseline scan
+
+```
+SENTIENT_SAVE_BASELINE
+```
+
+Run on bare bed before printing. Used by SENTIENT_SCAN_LAYER for comparison.
+
+---
+
+## 4. Per-Filament Settings
+
+### How it works
+
+Every time START_PRINT runs it automatically:
+1. Reads the FILAMENT parameter from the slicer
+2. Looks up the saved Z offset for that filament
+3. Applies it before printing starts
+
+Nothing needed in the slicer except passing the filament type.
+
+### Slicer filament type variable
+
+In OrcaSlicer the variable is `[filament_type]` — this passes values like PLA, PETG, ASA, ABS, TPU automatically.
+
+In PrusaSlicer the variable is `[filament_type]`.
+
+### Chamber temp per filament
+
+In your slicer filament settings set chamber temperature:
+- ASA → 40°C
+- ABS → 40°C
+- PLA → 0 (skips heat soak)
+- PETG → 0 (skips heat soak)
+- TPU → 0 (skips heat soak)
+
+When chamber temp is 0 the heat soak is skipped entirely.
+
+### Pressure advance per filament
+
+Set in filament start gcode in slicer — sentient doesn't manage PA yet:
+```
+SET_PRESSURE_ADVANCE ADVANCE=0.038
+```
+
+Run Calibration → Pressure Advance in OrcaSlicer to find the right value per filament.
+
+---
+
+## 5. Dynamic Accel System
+
+### What it does
+
+sentient automatically reduces acceleration as the print gets taller. Tall prints are more prone to resonance because the printed part itself can flex. Reducing accel at height eliminates banding on tall prints without slowing down short prints.
+
+### Speed zones
+
+| Zone | Height | Accel | Why |
+|---|---|---|---|
+| Full | Z < 50mm | 100% of max | Part is short and rigid |
+| Medium | Z 50-150mm | 70% of max | Reducing resonance risk |
+| Safe | Z > 150mm | 45% of max | Tall prints need stability |
+
+With max accel 4300:
+```
+Full:    4300 mm/s²
+Medium:  3010 mm/s²
+Safe:    1935 mm/s²
+```
+
+### How zone changes happen
+
+The OrcaSlicer post-processor script injects `_UPDATE_PRINT_HEIGHT Z=x.xxx` at every layer change. Klipper evaluates the height and switches zones automatically. You'll see messages in the Mainsail console as zones change.
+
+### Manual override
+
+Override during a print from console or KlipperScreen:
+```
+ACCEL_FULL
+ACCEL_MEDIUM
+ACCEL_CONSERVATIVE
+```
+
+The override stays until the next layer change triggers an automatic update, or until the print ends.
+
+### Checking current zone
+
+```
+TUNE_STATUS
+```
+
+Shows current zone and all accel values.
+
+---
+
+## 6. Heat Soak
+
+### What it does
+
+For ASA and ABS, printing in an unheated enclosure causes warping and layer delamination. sentient waits for the chamber to reach a target temperature before starting the print.
+
+### How to enable
+
+Set chamber temperature in your filament preset:
+- OrcaSlicer: Filament settings → Filament tab → Chamber temperature → 40
+- PrusaSlicer: Filament settings → Chamber temperature → 40
+
+Leave it at 0 for PLA/PETG/TPU to skip heat soak.
+
+### Manual heat soak
+
+```
+HEAT_SOAK CHAMBER_TEMP=40
+HEAT_SOAK CHAMBER_TEMP=45 MAX_WAIT=30
+```
+
+MAX_WAIT is in minutes — default is 20 minutes.
+
+### Monitoring chamber
+
+```
+TUNE_STATUS
+```
+
+Shows current chamber temperature. Also visible on the sentient dashboard.
+
+---
+
+## 7. Dashboard
+
+### Accessing
+
+Open in any browser on your network:
+```
+http://[your-printer-ip]:8080
+```
+
+### What it shows
+
+**Top bar:** Printer name, connection status, live clock
+
+**Sidebar:**
+- Nozzle, bed, chamber temperatures with targets
+- Humidity percentage with warning indicator
+- Accel zone reference values (Full / Medium / Safe)
+
+**Main area:**
+- Print status with progress bar and ETA
+- Current speed zone (color coded green/yellow/red)
+- Print height with zone explanation
+- Active acceleration value
+- Current filament type
+- Input shaper status and calibration age
+- Live activity log — plain English record of every zone change, height milestone, and system event
+
+### Dashboard updates
+
+Every 2 seconds automatically. No refresh needed.
+
+---
+
+## 8. KlipperScreen
+
+sentient adds a **Smart Tune** menu accessible from More on the main screen.
+
+### Menu items
+
+| Button | What it does |
+|---|---|
+| Smart Tune | Opens macros panel with all sentient macros |
+| Run Shaper | Runs RUN_SHAPER_CALIBRATION |
+| Heat Soak ASA | Runs HEAT_SOAK CHAMBER_TEMP=40 |
+| Tune Status | Prints TUNE_STATUS to Mainsail console |
+| Accel Full | Sets full speed zone |
+| Accel Medium | Sets medium speed zone |
+| Accel Safe | Sets conservative speed zone |
+
+---
+
+## 9. All Commands Reference
+
+### Calibration
+
+| Command | Description |
+|---|---|
+| `RUN_SHAPER_CALIBRATION` | Run input shaper, update max accel, save |
+| `AUTO_SHAPER_CALIBRATE` | Alias for RUN_SHAPER_CALIBRATION |
+| `CALIBRATE_PLA` | Z offset calibration for PLA |
+| `CALIBRATE_PETG` | Z offset calibration for PETG |
+| `CALIBRATE_ASA` | Z offset calibration for ASA |
+| `CALIBRATE_ABS` | Z offset calibration for ABS |
+| `CALIBRATE_TPU` | Z offset calibration for TPU |
+| `CALIBRATE_ALL_FILAMENTS` | Calibrate all five sequentially |
+
+### Z Offset
+
+| Command | Description |
+|---|---|
+| `SENTIENT_CALIBRATE_Z FILAMENT=ASA BED_TEMP=100 NOZZLE_TEMP=260` | Full calibration with custom temps |
+| `SENTIENT_STATUS` | Show all saved filament Z offsets |
+| `SENTIENT_SCAN_LAYER` | Scan surface and report height |
+| `SENTIENT_SAVE_BASELINE` | Save current mesh as bare bed baseline |
+| `SENTIENT_APPLY_FILAMENT_OFFSET FILAMENT=ASA` | Apply saved offset for filament |
+| `SENTIENT_GET_FILAMENT_OFFSET FILAMENT=ASA` | Check saved offset for filament |
+| `SENTIENT_SET_FILAMENT_OFFSET FILAMENT=ASA OFFSET=-0.390` | Manually set offset |
+
+### Acceleration
+
+| Command | Description |
+|---|---|
+| `ACCEL_FULL` | Set full speed zone |
+| `ACCEL_MEDIUM` | Set medium speed zone |
+| `ACCEL_CONSERVATIVE` | Set safe speed zone |
+| `_UPDATE_PRINT_HEIGHT Z=25.4` | Manual height update (usually called by post-processor) |
+
+### Heat Soak
+
+| Command | Description |
+|---|---|
+| `HEAT_SOAK CHAMBER_TEMP=40` | Wait for chamber to reach 40°C |
+| `HEAT_SOAK CHAMBER_TEMP=45 MAX_WAIT=30` | Custom temp and max wait time |
+
+### Status
+
+| Command | Description |
+|---|---|
+| `TUNE_STATUS` | Full system status — accel, shaper, chamber, filament offsets |
+| `SENTIENT_STATUS` | Filament Z offsets only |
+
+### Print Control
+
+| Command | Description |
+|---|---|
+| `START_PRINT BED_TEMP=100 EXTRUDER_TEMP=260 FILAMENT=ASA CHAMBER_TEMP=40` | Start print with all parameters |
+| `END_PRINT` | End print, reset Z offset, restore accel |
+
+### Filament
+
+| Command | Description |
+|---|---|
+| `LOAD_FILAMENT` | Load filament at max velocity |
+| `UNLOAD_FILAMENT` | Unload filament |
+
+---
+
+## 10. Troubleshooting
+
+### Klipper won't start after installing sentient
+
+Check the Mainsail error banner — it will say exactly what's wrong. Common causes:
+- Duplicate macro name — check for conflicting macros in printer.cfg
+- Missing `[save_variables]` section — sentient needs this to store filament offsets
+- Syntax error in smart_macros.cfg
+
+### SENTIENT_STATUS shows no offsets after reboot
+
+Normal — offsets are stored in `smart_tune_vars.cfg`. If that file exists they load on connect. Run `SENTIENT_STATUS` again after Klipper fully initializes (wait 30 seconds after restart).
+
+### Z offset calibration prints in wrong location
+
+Adjust in printer.cfg:
+```ini
+[sentient_first_layer]
+calibration_x: 30    ← change this
+calibration_y: 30    ← change this
+```
+
+Make sure the calibration area is clear of bed clips and hardware.
+
+### Dynamic accel not changing during print
+
+The OrcaSlicer post-processor script needs to be installed and working. Check:
+- Process → Others → Post-processing Scripts has the path to `dynamic_accel_postprocessor.py`
+- Python is installed on your PC
+- Re-slice and check the gcode for `_UPDATE_PRINT_HEIGHT` lines
+
+### Heat soak never completes
+
+- Check chamber sensor is working: `TUNE_STATUS` should show a real temperature
+- If chamber temp is reading wrong check SHT3X wiring and i2c address
+- Increase MAX_WAIT: `HEAT_SOAK CHAMBER_TEMP=40 MAX_WAIT=30`
+
+### Dashboard not loading
+
+Check sentient service is running:
+```bash
+sudo systemctl status sentient
+```
+
+If not running:
+```bash
+sudo systemctl start sentient
+```
+
+### KlipperScreen blank
+
+```bash
+sudo systemctl restart KlipperScreen
+```
+
+If still blank after restart — reboot the printer. Rock 2A display drivers sometimes need a full reboot to recover.
+
+---
+
+## Quick Reference Card
+
+```
+First print on new filament:
+  CALIBRATE_ASA  (or PLA, PETG, ABS, TPU)
+
+Check everything is working:
+  TUNE_STATUS
+
+Something looks wrong with first layer:
+  SENTIENT_SCAN_LAYER
+
+Banding on tall print:
+  ACCEL_CONSERVATIVE  (manual override)
+
+Re-ran input shaper, update accel:
+  RUN_SHAPER_CALIBRATION  (does it automatically)
+
+See all saved Z offsets:
+  SENTIENT_STATUS
+
+Dashboard:
+  http://[printer-ip]:8080
+
+GitHub:
+  github.com/nukes1810/sentient
+```
