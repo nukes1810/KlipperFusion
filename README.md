@@ -1,10 +1,10 @@
-# KlipperFusion
+# Sentient
 
 I got tired of watching Bambu and other manufacturers lock down their firmware while charging a premium for features that should exist on every printer. Auto flow calibration, first layer scanning, failure detection — none of this is magic. It's sensors and software. So I built it myself.
 
 This started as a personal project on my Nebula 370 custom CoreXY build. Every feature in here has been printed, broken, fixed, and reprinted. Nothing is theoretical.
 
-The goal is simple — if you built your own printer or run Klipper, you shouldn't have to choose between features and freedom. KlipperFusion is the answer to that.
+The goal is simple — if you built your own printer or run Klipper, you shouldn't have to choose between features and freedom. Sentient is the answer to that.
 
 ---
 
@@ -14,7 +14,7 @@ The 3D printing world is splitting. On one side you have locked-down commercial 
 
 Nobody should have to buy a Bambu to get smart printing. If you have the hardware, you should have the features.
 
-KlipperFusion is an open, modular, community-driven intelligence layer for Klipper. Start with zero extra hardware and get smarter printing today. Add sensors to unlock more. Build toward something that matches or beats anything commercial — and actually understand how it works.
+Sentient is an open, modular, community-driven intelligence layer for Klipper. Start with zero extra hardware and get smarter printing today. Add sensors to unlock more. Build toward something that matches or beats anything commercial — and actually understand how it works.
 
 ---
 
@@ -22,7 +22,7 @@ KlipperFusion is an open, modular, community-driven intelligence layer for Klipp
 
 No extra hardware needed to start. Install it and your printer gets smarter today.
 
-**Dynamic acceleration by print height** — tall prints have always been a problem on fast printers. Banding, ringing, layer separation. KlipperFusion automatically backs off acceleration as the print gets taller, based on your actual input shaper results not guesswork.
+**Dynamic acceleration by print height** — tall prints have always been a problem on fast printers. Banding, ringing, layer separation. Sentient automatically backs off acceleration as the print gets taller, based on your actual input shaper results not guesswork.
 
 ```
 Under 50mm   → full speed    (100% of your calibrated max accel)
@@ -44,7 +44,7 @@ Zone changes happen automatically mid-print. You'll see them in the console and 
 
 ## Feature Tiers
 
-KlipperFusion grows with your hardware. Every tier adds features, nothing breaks what was already working.
+Sentient grows with your hardware. Every tier adds features, nothing breaks what was already working.
 
 **Tier 0 — Any Klipper printer, no extra hardware**
 - Dynamic accel by height
@@ -85,8 +85,8 @@ KlipperFusion grows with your hardware. Every tier adds features, nothing breaks
 
 ```bash
 cd ~
-git clone https://github.com/nukes1810/KlipperFusion.git
-cd KlipperFusion
+git clone https://github.com/nukes1810/Sentient.git
+cd Sentient
 ./install.sh
 ```
 
