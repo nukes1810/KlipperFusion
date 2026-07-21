@@ -1,9 +1,11 @@
-# sentient_first_layer.py v2
+# sentient_first_layer.py v3
 # Sentient Project - https://github.com/nukes1810/sentient
 #
-# Fixed mesh reading to use correct Klipper API:
-#   bed_mesh.get_status() returns probed_matrix and mesh_matrix
-#   These are the correct ways to read mesh data in Klipper
+# v3 fixes:
+#   - Store nozzle temp and reheat before printing calibration square
+#   - Nozzle was cooling during 35 second bed scan causing shutdown
+#   - Tighter infill spacing (0.45mm) for solid calibration square
+#   - Better error messages throughout
 
 import logging
 import math
@@ -38,6 +40,7 @@ class SentientFirstLayer:
         self.saved_offsets = {}
         self.current_filament = 'PLA'
         self.calibrating = False
+        self._nozzle_temp = None  # stored nozzle temp for reheating
 
         self.gcode.register_command(
             'SENTIENT_CALIBRATE_Z',
@@ -78,7 +81,7 @@ class SentientFirstLayer:
         self.printer.register_event_handler(
             'klippy:connect', self._handle_connect
         )
-        self.logger.info("sentient_first_layer v2 loaded")
+        self.logger.info("sentient_first_layer v3 loaded")
 
     def _handle_connect(self):
         try:
@@ -110,13 +113,9 @@ class SentientFirstLayer:
             self.logger.warning("Could not save offset: %s" % str(e))
 
     def _get_mesh_average(self):
-        """
-        Get average Z from current bed mesh using Klipper's correct API.
-        Uses bed_mesh.get_status() which returns probed_matrix.
-        """
+        """Get average Z from current bed mesh using Klipper API"""
         try:
             bed_mesh = self.printer.lookup_object('bed_mesh')
-            # get_status returns dict with probed_matrix and mesh_matrix
             status = bed_mesh.get_status(None)
             matrix = status.get('probed_matrix', None)
             if not matrix or matrix == [[]] or len(matrix) == 0:
@@ -152,12 +151,36 @@ class SentientFirstLayer:
     def _apply_z_offset(self, offset):
         self._run_gcode("SET_GCODE_OFFSET Z=%.4f MOVE=1" % offset)
 
+    def _reheat_nozzle(self, gcmd):
+        """Reheat nozzle to stored temp — called after bed scan"""
+        if self._nozzle_temp is not None:
+            gcmd.respond_info(
+                "Reheating nozzle to %.0f°C after bed scan..." % self._nozzle_temp
+            )
+            self._run_gcode("M109 S%.0f" % self._nozzle_temp)
+        else:
+            # No stored temp — get current target
+            try:
+                extruder = self.printer.lookup_object('extruder')
+                current_target = extruder.get_heater().get_status(None)['target']
+                if current_target < 150:
+                    gcmd.respond_info(
+                        "Warning: Nozzle target is %.0f°C — too cold to extrude.\n"
+                        "Waiting for nozzle to reach 150°C minimum..." % current_target
+                    )
+                    self._run_gcode("M109 S150")
+            except Exception as e:
+                self.logger.warning("Could not check nozzle temp: %s" % str(e))
+
     def cmd_SENTIENT_CALIBRATE_Z(self, gcmd):
         filament = gcmd.get('FILAMENT', 'PLA').upper()
         bed_temp = gcmd.get_float('BED_TEMP', None)
         nozzle_temp = gcmd.get_float('NOZZLE_TEMP', None)
         iterations = gcmd.get_int('ITERATIONS', self.iterations)
         target = FILAMENT_TARGETS.get(filament, FILAMENT_TARGETS['default'])
+
+        # Store nozzle temp for reheating after scans
+        self._nozzle_temp = nozzle_temp
 
         gcmd.respond_info(
             "=== sentient Z Offset Calibration ===\n"
@@ -187,15 +210,15 @@ class SentientFirstLayer:
         self.baseline_avg = self._get_mesh_average()
 
         if self.baseline_avg is not None:
-            gcmd.respond_info(
-                "Baseline average: %.4fmm" % self.baseline_avg
-            )
+            gcmd.respond_info("Baseline average: %.4fmm" % self.baseline_avg)
         else:
             gcmd.respond_info(
                 "Warning: Could not read baseline mesh.\n"
-                "Calibration will adjust Z offset based on current offset value.\n"
-                "For best results ensure Cartographer bed mesh is working."
+                "Check BED_MESH_CALIBRATE is working correctly."
             )
+
+        # CRITICAL: Reheat nozzle after bed scan — scan takes 35s and nozzle cools
+        self._reheat_nozzle(gcmd)
 
         best_offset = self._get_current_z_offset()
 
@@ -210,6 +233,9 @@ class SentientFirstLayer:
 
             gcmd.respond_info("Scanning first layer...")
             self._run_gcode("BED_MESH_CALIBRATE")
+
+            # CRITICAL: Reheat nozzle after each scan
+            self._reheat_nozzle(gcmd)
 
             layer_avg = self._get_mesh_average()
 
@@ -239,8 +265,7 @@ class SentientFirstLayer:
             else:
                 gcmd.respond_info(
                     "Could not calculate layer height.\n"
-                    "Baseline: %s  Layer scan: %s\n"
-                    "Check that BED_MESH_CALIBRATE completed successfully." % (
+                    "Baseline: %s  Layer scan: %s" % (
                         "OK" if self.baseline_avg is not None else "MISSING",
                         "OK" if layer_avg is not None else "MISSING"
                     )
@@ -264,6 +289,7 @@ class SentientFirstLayer:
         self.calibrating = False
 
     def _print_calibration_square(self):
+        """Print a solid filled calibration square"""
         x = self.cal_x
         y = self.cal_y
         size = self.cal_size
@@ -277,6 +303,7 @@ class SentientFirstLayer:
         self._run_gcode("G1 Z%.3f F300" % lh)
         self._run_gcode("G92 E0")
 
+        # Outer perimeter
         moves = [
             (x + size, y),
             (x + size, y + size),
@@ -294,7 +321,8 @@ class SentientFirstLayer:
             )
             cx, cy = tx, ty
 
-        line_spacing = 0,45
+        # Solid infill — 0.45mm line spacing for solid square
+        line_spacing = 0.45
         current_y = y + line_spacing
         direction = 1
         while current_y < y + size - line_spacing:
@@ -361,9 +389,7 @@ class SentientFirstLayer:
             self.baseline_avg = avg
             gcmd.respond_info("Baseline saved: %.4fmm" % avg)
         else:
-            gcmd.respond_info(
-                "No mesh data. Run BED_MESH_CALIBRATE first."
-            )
+            gcmd.respond_info("No mesh data. Run BED_MESH_CALIBRATE first.")
 
     def cmd_SENTIENT_SET_FILAMENT_OFFSET(self, gcmd):
         filament = gcmd.get('FILAMENT', 'PLA').upper()
