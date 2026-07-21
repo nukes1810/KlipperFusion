@@ -93,7 +93,7 @@ cd Sentient
 Add to `printer.cfg`:
 
 ```ini
-[include klipper_fusion.cfg]
+[include sentient.cfg]
 ```
 
 Restart Klipper. You're running Tier 0.
@@ -119,7 +119,7 @@ Set chamber temp in your filament presets:
 After install, open from any browser:
 
 ```
-http://[your-printer-ip]/klipper_fusion
+http://[your-printer-ip]sentient
 ```
 
 Shows everything in plain English. No digging through console logs.
